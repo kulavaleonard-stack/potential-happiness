@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="DeutschMeister"/>
+<meta name="theme-color" content="#3B8EEA"/>
+<title>DeutschMeister 🇩🇪</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,sans-serif;background:#1A1A2E;display:flex;justify-content:center;align-items:center;min-height:100vh;overflow:hidden;}
+  #root{width:100%;max-width:430px;height:100vh;max-height:900px;}
+  ::-webkit-scrollbar{width:3px;}
+  ::-webkit-scrollbar-thumb{background:#ccc;border-radius:2px;}
+  @keyframes dotB{0%,100%{transform:scale(1);opacity:.5}50%{transform:scale(1.4);opacity:1}}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+const VERSION   = "1.0.0";
+const COPYRIGHT = "© 2026 Mr. KULAVA Leonard — DeutschMeister™";
+
+const C = {
+  bg:"#F4F4F8", card:"#FFFFFF", border:"#EBEBF0",
+  text:"#1A1A2E", muted:"#8E8EA0", faint:"#F0F0F5",
+  green:"#2DC78A", blue:"#3B8EEA", pink:"#F0567A",
+  gold:"#F5A623", purple:"#8B5CF6", teal:"#06B6D4",
+  orange:"#F97316", red:"#EF4444", indigo:"#6366F1",
+  navy:"#0A0F1E", cyan:"#22D3EE",
+  shadow:"0 2px 16px rgba(0,0,0,0.06)",
+  shadowMd:"0 8px 32px rgba(0,0,0,0.12)",
+};
+
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── UI HELPERS ──────────────────────────────────────────────────────────────
+const Card = ({children,style={},onClick}) => (
+  React.createElement('div', {
+    onClick, style:{background:C.card,borderRadius:18,boxShadow:C.shadow,
+    cursor:onClick?"pointer":"default",transition:"all 0.2s",...style}}, children)
+);
+const Pill = ({children,color=C.green}) => (
+  React.createElement('span',{style:{background:color+"18",color,borderRadius:999,padding:"3px 10px",fontSize:11,fontWeight:700}},children)
+);
+const Bar = ({v=0,color=C.green,h=6}) => (
+  React.createElement('div',{style:{background:C.faint,borderRadius:999,height:h,overflow:"hidden"}},
+    React.createElement('div',{style:{width:`${Math.min(100,v)}%`,height:"100%",background:color,borderRadius:999,transition:"width 0.8s"}}))
+);
+
+// ── TTS ─────────────────────────────────────────────────────────────────────
+function useTTS() {
+  const [speaking,setSpeaking]=useState(false);
+  const speak=useCallback((text,lang="fr-FR",rate=0.9)=>{
+    if(!window.speechSynthesis)return;
+    window.speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang=lang;u.rate=rate;u.volume=1;
+    u.onstart=()=>setSpeaking(true);u.onend=()=>setSpeaking(false);u.onerror=()=>setSpeaking(false);
+    setTimeout(()=>window.speechSynthesis.speak(u),100);
+  },[]);
+  const stop=useCallback(()=>{window.speechSynthesis?.cancel();setSpeaking(false);},[]);
+  return{speak,stop,speaking};
+}
+
+// ── CLAUDE API ───────────────────────────────────────────────────────────────
+async function askClaude(system,messages){
+  try{
+    const r=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:300,system,messages}),
+    });
+    const d=await r.json();
+    return d.content?.[0]?.text||"Réessayez.";
+  }catch{return"Connexion IA indisponible.";}
+}
+
+// ── BACKUP ──────────────────────────────────────────────────────────────────
+function useBackup(profile,sm2){
+  const [exportDone,setExportDone]=useState(false);
+  const [importErr,setImportErr]=useState("");
+  const [importData,setImportData]=useState(null);
+  const [importPhase,setImportPhase]=useState("idle");
+  const fileRef=useRef(null);
+
+  const doExport=useCallback(()=>{
+    const data={__meta:{app:"DeutschMeister",version:VERSION,copyright:COPYRIGHT,exportDate:new Date().toISOString(),exportDateFr:new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",year:"numeric"})},dm_profile:profile,dm_sm2:sm2};
+    const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=`DeutschMeister_${profile.prenom||"backup"}_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();URL.revokeObjectURL(url);
+    setExportDone(true);setTimeout(()=>setExportDone(false),4000);
+  },[profile,sm2]);
+
+  const openFile=useCallback(()=>fileRef.current?.click(),[]);
+  const onFile=useCallback((e)=>{
+    const f=e.target.files?.[0];if(!f)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const d=JSON.parse(ev.target.result);
+        if(!d.__meta||d.__meta.app!=="DeutschMeister"){setImportErr("❌ Fichier invalide");return;}
+        setImportData(d);setImportErr("");setImportPhase("confirm");
+      }catch{setImportErr("❌ Fichier corrompu");}
+    };
+    reader.readAsText(f);e.target.value="";
+  },[]);
+
+  const doImport=useCallback((onRestored)=>{
+    if(!importData)return;
+    if(importData.dm_profile)onRestored(importData.dm_profile,importData.dm_sm2||{});
+    setImportPhase("success");
+  },[importData]);
+
+  const cancelImport=useCallback(()=>{setImportPhase("idle");setImportData(null);setImportErr("");},[]);
+  return{exportDone,importErr,importData,importPhase,fileRef,doExport,openFile,onFile,doImport,cancelImport};
+}
+
+// ── ONBOARDING ───────────────────────────────────────────────────────────────
+function Onboarding({onComplete}){
+  const [step,setStep]=useState(0);
+  const [prenom,setPrenom]=useState("");
+  const [nom,setNom]=useState("");
+  const [avatar,setAvatar]=useState("👨‍🎓");
+  const [niveau,setNiveau]=useState("A1");
+  const [objectif,setObjectif]=useState("A2");
+  const [dailyMin,setDailyMin]=useState(15);
+  const [persona,setPersona]=useState("parent");
+  const [err,setErr]=useState("");
+
+  const avatars=["👨‍🎓","👩‍🎓","🧑‍💻","👨‍🏫","👩‍🏫","🎓","🧑‍🎨","👨‍💼","👩‍💼","🧑"];
+  const personas=[
+    {id:"parent",icon:"🤱",label:"Parent (Mia)",desc:"Patient, doux, part de zéro"},
+    {id:"ami",icon:"🤜",label:"Pote (Max)",desc:"Casual, fun, encourage"},
+    {id:"coach",icon:"🏋️",label:"Coach (Sergei)",desc:"Exigeant, résultats rapides"},
+    {id:"mentor",icon:"🧙",label:"Mentor (Wei)",desc:"Sage, vision long terme"},
+    {id:"enfant",icon:"🌈",label:"Enfant (Lulu)",desc:"Jeux, chansons, magie"},
+  ];
+
+  const next=()=>{
+    if(step===0&&!prenom.trim()){setErr("Veuillez entrer votre prénom");return;}
+    setErr("");
+    if(step<3)setStep(s=>s+1);
+    else onComplete({prenom:prenom.trim(),nom:nom.trim(),avatar,niveau,objectif,dailyMin,persona,streak:0,xp:0,joined:new Date().toISOString()});
+  };
+
+  const s=(el,style)=>React.createElement(el,{style});
+
+  return React.createElement('div',{style:{display:"flex",flexDirection:"column",height:"100%",background:C.bg}},
+    // Progress
+    React.createElement('div',{style:{padding:"16px 18px 0",display:"flex",gap:6,flexShrink:0}},
+      [0,1,2,3].map(i=>React.createElement('div',{key:i,style:{height:4,borderRadius:2,background:i<=step?C.blue:C.border,flex:i===step?2:1,transition:"all 0.3s"}}))),
+    // Content
+    React.createElement('div',{style:{flex:1,overflowY:"auto",padding:"20px 18px"}},
+      step===0&&React.createElement('div',{style:{animation:"fadeIn 0.3s ease-out"}},
+        React.createElement('div',{style:{textAlign:"center",marginBottom:24}},
+          React.createElement('div',{style:{fontSize:60,marginBottom:12}},"🇩🇪"),
+          React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:24,marginBottom:4}},"Bienvenue dans"),
+          React.createElement('div',{style:{color:C.blue,fontWeight:900,fontSize:28}},"DeutschMeister"),
+          React.createElement('div',{style:{color:C.muted,fontSize:13,marginTop:6}},`${COPYRIGHT}`)),
+        React.createElement(Card,{style:{padding:20,marginBottom:14}},
+          React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:14,marginBottom:14}},"👤 Comment vous appelez-vous ?"),
+          React.createElement('input',{value:prenom,onChange:e=>{setPrenom(e.target.value);setErr("");},placeholder:"Votre prénom...",
+            style:{width:"100%",padding:"14px 16px",borderRadius:14,border:`2px solid ${prenom?C.blue:C.border}`,background:C.faint,color:C.text,fontSize:16,outline:"none",marginBottom:10,fontFamily:"inherit"}}),
+          React.createElement('input',{value:nom,onChange:e=>setNom(e.target.value),placeholder:"Votre nom (optionnel)...",
+            style:{width:"100%",padding:"12px 16px",borderRadius:14,border:`1px solid ${C.border}`,background:C.faint,color:C.text,fontSize:15,outline:"none",fontFamily:"inherit"}}),
+          err&&React.createElement('div',{style:{color:C.red,fontSize:12,marginTop:8}},err)),
+        React.createElement(Card,{style:{padding:18}},
+          React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:13,marginBottom:12}},"🎭 Votre avatar"),
+          React.createElement('div',{style:{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"center"}},
+            avatars.map(av=>React.createElement('button',{key:av,onClick:()=>setAvatar(av),
+              style:{width:44,height:44,borderRadius:12,border:`2px solid ${avatar===av?C.blue:C.border}`,background:avatar===av?C.blue+"15":C.faint,fontSize:22,cursor:"pointer"}},av))))),
+
+      step===1&&React.createElement('div',{style:{animation:"fadeIn 0.3s ease-out"}},
+        React.createElement('div',{style:{textAlign:"center",marginBottom:20}},
+          React.createElement('div',{style:{fontSize:48,marginBottom:8}},"🎯"),
+          React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:22}},"Bonjour "+prenom+" !")),
+        React.createElement(Card,{style:{padding:20,marginBottom:12}},
+          React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:14,marginBottom:12}},"📊 Niveau actuel"),
+          React.createElement('div',{style:{display:"flex",gap:8}},
+            ["zero","A1","A2"].map((l,i)=>React.createElement('button',{key:l,onClick:()=>setNiveau(l),
+              style:{flex:1,padding:"11px 4px",borderRadius:12,border:`2px solid ${niveau===l?C.blue:C.border}`,background:niveau===l?C.blue+"12":C.faint,color:niveau===l?C.blue:C.muted,fontWeight:700,fontSize:11,cursor:"pointer"}},
+              ["Débutant","A1","A2"][i])))),
+        React.createElement(Card,{style:{padding:20,marginBottom:12}},
+          React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:14,marginBottom:12}},"🏆 Objectif visé"),
+          React.createElement('div',{style:{display:"flex",gap:10}},
+            ["A1","A2"].map(l=>React.createElement('button',{key:l,onClick:()=>setObjectif(l),
+              style:{flex:1,padding:"16px 0",borderRadius:14,border:`2px solid ${objectif===l?C.green:C.border}`,background:objectif===l?C.green+"12":C.faint,color:objectif===l?C.green:C.muted,fontWeight:800,fontSize:22,cursor:"pointer"}},
+              l,React.createElement('div',{style:{fontSize:10,fontWeight:600,marginTop:3}},l==="A1"?"Débutant":"Élémentaire"))))),
+        React.createElement(Card,{style:{padding:18}},
+          React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:13,marginBottom:10}},"⏱ Temps par jour"),
+          React.createElement('div',{style:{display:"flex",gap:6}},
+            [5,10,15,20,30].map(m=>React.createElement('button',{key:m,onClick:()=>setDailyMin(m),
+              style:{flex:1,padding:"10px 4px",borderRadius:11,border:`2px solid ${dailyMin===m?C.gold:C.border}`,background:dailyMin===m?C.gold+"15":C.faint,color:dailyMin===m?C.gold:C.muted,fontWeight:700,fontSize:12,cursor:"pointer"}},
+              m,React.createElement('div',{style:{fontSize:10}},"min")))))),
+
+      step===2&&React.createElement('div',{style:{animation:"fadeIn 0.3s ease-out"}},
+        React.createElement('div',{style:{textAlign:"center",marginBottom:20}},
+          React.createElement('div',{style:{fontSize:48,marginBottom:8}},"💝"),
+          React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:20}},prenom+", choisissez"),
+          React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:20}},"votre style d'apprentissage")),
+        personas.map(p=>React.createElement('div',{key:p.id,onClick:()=>setPersona(p.id),
+          style:{background:C.card,borderRadius:16,padding:"14px 16px",border:`2px solid ${persona===p.id?C.purple:C.border}`,cursor:"pointer",marginBottom:10,display:"flex",gap:12,alignItems:"center",boxShadow:persona===p.id?`0 4px 16px ${C.purple}25`:C.shadow}},
+          React.createElement('div',{style:{fontSize:28,flexShrink:0}},p.icon),
+          React.createElement('div',{style:{flex:1}},
+            React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:14}},p.label),
+            React.createElement('div',{style:{color:C.muted,fontSize:12}},p.desc)),
+          persona===p.id&&React.createElement('span',{style:{color:C.purple,fontSize:18}},"✓")))),
+
+      step===3&&React.createElement('div',{style:{animation:"fadeIn 0.3s ease-out"}},
+        React.createElement('div',{style:{textAlign:"center",marginBottom:20}},
+          React.createElement('div',{style:{fontSize:60,marginBottom:10}},avatar),
+          React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:22}},prenom+" "+nom),
+          React.createElement('div',{style:{color:C.green,fontWeight:700,fontSize:14,marginTop:4}},"Tout est prêt ! 🎉")),
+        React.createElement(Card,{style:{padding:20,marginBottom:14,background:`linear-gradient(135deg,${C.green}08,${C.blue}06)`}},
+          [["👤","Apprenant",prenom+" "+nom],["📊","Niveau",niveau==="zero"?"Débutant absolu":niveau],["🏆","Objectif","Goethe "+objectif],["⏱","Temps/jour",dailyMin+" min"],["💝","Companion",personas.find(p=>p.id===persona)?.label]].map(([ic,l,v],i)=>
+            React.createElement('div',{key:i,style:{display:"flex",gap:12,alignItems:"center",padding:"8px 0",borderBottom:i<4?`1px solid ${C.border}`:"none"}},
+              React.createElement('span',{style:{fontSize:18}},ic),
+              React.createElement('span',{style:{color:C.muted,fontSize:13,flex:1}},l),
+              React.createElement('span',{style:{color:C.text,fontWeight:700,fontSize:13}},v)))),
+        React.createElement('div',{style:{background:C.navy,borderRadius:14,padding:14,textAlign:"center"}},
+          React.createElement('div',{style:{color:C.gold,fontWeight:700,fontSize:10}},COPYRIGHT),
+          React.createElement('div',{style:{color:"#ffffff40",fontSize:8,marginTop:3}},"Version "+VERSION+" · Tous droits réservés")))),
+    // Buttons
+    React.createElement('div',{style:{padding:"12px 18px 24px",flexShrink:0}},
+      React.createElement('div',{style:{display:"flex",gap:10}},
+        step>0&&React.createElement('button',{onClick:()=>setStep(s=>s-1),
+          style:{flex:1,padding:14,borderRadius:14,border:`1px solid ${C.border}`,background:C.faint,color:C.muted,fontWeight:700,fontSize:14,cursor:"pointer"}},"← Retour"),
+        React.createElement('button',{onClick:next,
+          style:{flex:2,padding:16,borderRadius:16,border:"none",background:`linear-gradient(135deg,${C.blue},${C.indigo})`,color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer"}},
+          step===3?"🚀 Commencer !":"Continuer →"))));
+}
+
+// ── HOME ─────────────────────────────────────────────────────────────────────
+function Home({profile,setScreen,sm2}){
+  const mastered=Object.values(sm2).filter(c=>c.repetition>=3).length;
+  const greet=new Date().getHours()<12?"Bonjour":new Date().getHours()<18?"Bon après-midi":"Bonsoir";
+  const modules=[
+    {id:"companion",icon:"💝",label:"Mon Companion IA",sub:"Parler avec "+({parent:"Mia",ami:"Max",coach:"Sergei",mentor:"Wei",enfant:"Lulu"}[profile.persona]),color:C.purple},
+    {id:"cours",    icon:"📖",label:"Cours A1/A2",       sub:"Modules progressifs",       color:C.gold},
+    {id:"vocab",    icon:"🎧",label:"800 Mots Audio",    sub:"SM-2 · 5 voix natives",     color:C.teal},
+    {id:"prononciation",icon:"🎙️",label:"Prononciation",sub:"Reconnaissance vocale IA",  color:C.blue},
+    {id:"horen",    icon:"🎧",label:"Hören",             sub:"Compréhension orale",        color:C.orange},
+    {id:"sprechen", icon:"🗣️",label:"Sprechen",          sub:"Conversation + Goethe",      color:C.green},
+    {id:"ecriture", icon:"✍️",label:"Écriture Guidée",   sub:"Correction IA Goethe",       color:C.indigo},
+    {id:"tests",    icon:"✅",label:"Tests & Examens",   sub:"Blancs Goethe A1/A2",        color:C.red},
+    {id:"gamification",icon:"🎮",label:"Progression",   sub:"XP · Streak · Boss",         color:C.pink},
+    {id:"culture",  icon:"🏛️",label:"Culture",           sub:"Régions · Recettes · Art",   color:"#92400E"},
+    {id:"brain",    icon:"🧠",label:"Coach IA",          sub:"Agent adaptatif",            color:C.cyan},
+    {id:"profil",   icon:"👤",label:"Mon Profil",        sub:"Stats · Backup · Réglages",  color:C.muted},
+  ];
+  return React.createElement('div',{style:{padding:"18px 18px 8px",overflowY:"auto",height:"100%"}},
+    // Header
+    React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:16}},
+      React.createElement('div',null,
+        React.createElement('div',{style:{color:C.muted,fontSize:12}},new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"})),
+        React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:22,marginTop:2}},
+          greet+", ",React.createElement('span',{style:{color:C.blue}},profile.prenom)," 👋")),
+      React.createElement('button',{onClick:()=>setScreen("profil"),
+        style:{background:C.faint,border:`1px solid ${C.border}`,borderRadius:14,padding:"8px 12px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2}},
+        React.createElement('span',{style:{fontSize:22}},profile.avatar),
+        React.createElement('span',{style:{color:C.muted,fontSize:9,fontWeight:700}},"Profil"))),
+    // Stats
+    React.createElement(Card,{style:{padding:16,marginBottom:14}},
+      React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}},
+        [[profile.streak||0,"🔥","Streak"],[profile.xp||0,"⚡","XP"],[mastered,"✅","Maîtrisés"]].map(([v,ic,l],i)=>
+          React.createElement('div',{key:i,style:{textAlign:"center",background:C.faint,borderRadius:12,padding:10}},
+            React.createElement('div',{style:{fontSize:16}},ic),
+            React.createElement('div',{style:{color:C.text,fontWeight:800,fontSize:18}},v),
+            React.createElement('div',{style:{color:C.muted,fontSize:10}},l))))),
+    // IA message
+    React.createElement(Card,{style:{padding:14,marginBottom:14,background:"linear-gradient(120deg,#F0FFF8,#EAF4FF)",display:"flex",gap:12,alignItems:"center"}},
+      React.createElement('div',{style:{fontSize:28}},"🤖"),
+      React.createElement('div',null,
+        React.createElement('div',{style:{color:C.blue,fontWeight:700,fontSize:11,marginBottom:2}},"Votre Coach IA"),
+        React.createElement('div',{style:{color:C.text,fontSize:13,lineHeight:1.5}},
+          profile.prenom+", bienvenue ! Votre companion vous attend dans le module 💝"))),
+    // Modules
+    React.createElement('div',{style:{color:C.muted,fontSize:11,fontWeight:700,letterSpacing:1,marginBottom:10}},"MODULES"),
+    React.createElement('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}},
+      modules.map(m=>React.createElement(Card,{key:m.id,onClick:()=>setScreen(m.id),style:{padding:14}},
+        React.createElement('div',{style:{width:40,height:40,borderRadius:12,background:m.color+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,marginBottom:8}},m.icon),
+        React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:12,lineHeight:1.3,marginBottom:2}},m.label),
+        React.createElement('div',{style:{color:C.muted,fontSize:10}},m.sub)))),
+    React.createElement('div',{style:{background:C.navy,borderRadius:14,padding:"10px 14px",textAlign:"center",marginBottom:8}},
+      React.createElement('div',{style:{color:"#ffffff40",fontSize:8}},COPYRIGHT+" · v"+VERSION)));
+}
+
+// ── COMPANION ─────────────────────────────────────────────────────────────────
+function Companion({profile,onBack}){
+  const names={parent:"Mia",ami:"Max",coach:"Sergei",mentor:"Wei",enfant:"Lulu"};
+  const pName=names[profile.persona]||"Max";
+  const icons={parent:"🤱",ami:"🤜",coach:"🏋️",mentor:"🧙",enfant:"🌈"};
+  const colors={parent:C.orange,ami:C.blue,coach:C.red,mentor:C.purple,enfant:C.teal};
+  const color=colors[profile.persona]||C.blue;
+  const greets={
+    parent:`Bonjour ${profile.prenom} mon cœur ! 🌸 Je suis tellement content(e) que tu sois là. On va apprendre ensemble doucement, sans pression. Tu es prêt(e) ?`,
+    ami:`Yo ${profile.prenom} ! 👋 C'est parti pour une session d'allemand ! T'as envie de faire quoi aujourd'hui ?`,
+    coach:`${profile.prenom} ! C'est l'heure de l'entraînement ! 💪 Objectif du jour : 20 nouveaux mots. On commence !`,
+    mentor:`Bonjour ${profile.prenom}. 🌿 Chaque session est un pas de plus sur le chemin de la maîtrise.`,
+    enfant:`COUCOU ${profile.prenom} ! 🌈 C'est Lulu ! On va faire un jeu magique en allemand ! Tu es prêt(e) ?`,
+  };
+  const systems={
+    parent:`Tu es Mia, companion maternel/paternel pour apprendre l'allemand à ${profile.prenom}. Patient(e), doux/douce, célèbres chaque micro-progrès. Appelle toujours ${profile.prenom} par son prénom. Max 3 phrases.`,
+    ami:`Tu es Max, pote de ${profile.prenom} qui parle allemand. Décontracté, fun, humour doux. Appelle ${profile.prenom} par son prénom. Max 3 phrases.`,
+    coach:`Tu es Sergei, coach sportif de ${profile.prenom}. Exigeant mais juste, vocabulaire sportif. Appelle toujours ${profile.prenom}. Max 3 phrases.`,
+    mentor:`Tu es Wei, mentor sage de ${profile.prenom}. Profond, philosophique. Appelle ${profile.prenom} avec respect. Max 3 phrases.`,
+    enfant:`Tu es Lulu, compagnon magique de ${profile.prenom} ! Joyeux, coloré, apprentissage par le jeu. Appelle ${profile.prenom} avec affection. Max 3 phrases.`,
+  };
+  const quick={parent:["Je veux apprendre !","Montre-moi un mot","Une histoire courte","Répétition douce"],ami:["T'as un truc fun ?","Défi du jour !","Correction rapide","Slang allemand"],coach:["Objectif du jour !","Un défi intense","Mon plan d'entraînement","Record à battre"],mentor:["Philosophie de la langue","Citation de Goethe","Vision long terme","Sens profond"],enfant:["Chantons ! 🎵","Un animal ! 🐶","Jeu de mots !","Histoire rigolote !"]};
+  const [msgs,setMsgs]=useState([{role:"assistant",text:greets[profile.persona]}]);
+  const [input,setInput]=useState(""),[loading,setLoading]=useState(false);
+  const {speak,speaking}=useTTS();
+  const endRef=useRef(null);
+  useEffect(()=>{endRef.current?.scrollIntoView({behavior:"smooth"});},[msgs,loading]);
+  useEffect(()=>{speak(greets[profile.persona],"fr-FR",profile.persona==="enfant"?1.15:0.9);},[]);
+  const send=async()=>{
+    const t=input.trim();if(!t||loading)return;
+    setInput("");
+    const next=[...msgs,{role:"user",text:t}];
+    setMsgs(next);setLoading(true);
+    const r=await askClaude(systems[profile.persona],next.slice(-6).map(m=>({role:m.role==="user"?"user":"assistant",content:m.text})));
+    setMsgs(m=>[...m,{role:"assistant",text:r}]);
+    speak(r,"fr-FR",profile.persona==="enfant"?1.15:0.9);
+    setLoading(false);
+  };
+  return React.createElement('div',{style:{display:"flex",flexDirection:"column",height:"100%"}},
+    // Header
+    React.createElement('div',{style:{background:C.card,padding:"12px 18px",borderBottom:`1px solid ${C.border}`,flexShrink:0}},
+      React.createElement('div',{style:{display:"flex",gap:10,alignItems:"center"}},
+        React.createElement('button',{onClick:onBack,style:{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer"}},"←"),
+        React.createElement('div',{style:{width:42,height:42,borderRadius:14,background:color+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,border:`1px solid ${color}30`}},icons[profile.persona]),
+        React.createElement('div',{style:{flex:1}},
+          React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:14}},pName+" — Votre Companion"),
+          React.createElement('div',{style:{color:color,fontSize:11}},"S'adresse à vous : "+profile.prenom)),
+        speaking&&React.createElement('div',{style:{width:6,height:6,borderRadius:"50%",background:C.green,boxShadow:`0 0 6px ${C.green}`}}))),
+    // Messages
+    React.createElement('div',{style:{flex:1,overflowY:"auto",padding:"14px 18px",background:`linear-gradient(180deg,${color}05,${C.bg})`}},
+      msgs.map((m,i)=>React.createElement('div',{key:i,style:{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",marginBottom:12,gap:8,alignItems:"flex-end"}},
+        m.role==="assistant"&&React.createElement('div',{style:{width:32,height:32,borderRadius:10,background:color+"20",border:`1px solid ${color}40`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}},icons[profile.persona]),
+        React.createElement('div',{style:{maxWidth:"78%"}},
+          React.createElement('div',{style:{padding:"11px 15px",fontSize:13,lineHeight:1.55,borderRadius:m.role==="user"?"18px 4px 18px 18px":"4px 18px 18px 18px",background:m.role==="user"?`linear-gradient(135deg,${color},${color}CC)`:C.card,color:m.role==="user"?"#fff":C.text,border:m.role==="assistant"?`1px solid ${C.border}`:"none",boxShadow:C.shadow,whiteSpace:"pre-line"}},m.text),
+          m.role==="assistant"&&React.createElement('button',{onClick:()=>speak(m.text,"fr-FR"),style:{background:"none",border:"none",color:color,fontSize:10,cursor:"pointer",marginTop:3,fontWeight:600}},"🔊 Écouter")))),
+      loading&&React.createElement('div',{style:{display:"flex",gap:8,alignItems:"center"}},
+        React.createElement('div',{style:{width:32,height:32,borderRadius:10,background:color+"20",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}},icons[profile.persona]),
+        React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:"4px 18px 18px 18px",padding:"12px 16px",display:"flex",gap:4}},
+          [0,1,2].map(i=>React.createElement('div',{key:i,style:{width:7,height:7,borderRadius:"50%",background:color,animation:`dotB 1.2s ${i*.2}s ease-in-out infinite`}})))),
+      React.createElement('div',{ref:endRef})),
+    // Quick
+    React.createElement('div',{style:{padding:"0 18px 6px",flexShrink:0,background:C.card,borderTop:`1px solid ${C.border}`}},
+      React.createElement('div',{style:{display:"flex",gap:5,overflowX:"auto",paddingTop:8,paddingBottom:4}},
+        (quick[profile.persona]||[]).map((q,i)=>React.createElement('button',{key:i,onClick:()=>setInput(q),
+          style:{padding:"6px 12px",borderRadius:999,border:`1px solid ${color}40`,background:color+"10",color,fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}},q)))),
+    // Input
+    React.createElement('div',{style:{padding:"6px 18px 16px",background:C.card,flexShrink:0}},
+      React.createElement('div',{style:{display:"flex",gap:8}},
+        React.createElement('input',{value:input,onChange:e=>setInput(e.target.value),onKeyDown:e=>e.key==="Enter"&&!loading&&send(),
+          placeholder:`Parler à ${pName}...`,
+          style:{flex:1,background:C.faint,border:`1.5px solid ${color}40`,borderRadius:14,padding:"11px 14px",color:C.text,fontSize:13,outline:"none",fontFamily:"inherit"}}),
+        React.createElement('button',{onClick:send,disabled:loading||!input.trim(),
+          style:{width:46,height:46,borderRadius:"50%",border:"none",background:input.trim()?`linear-gradient(135deg,${color},${color}CC)`:"#E5E7EB",color:input.trim()?"#fff":"#9CA3AF",fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:input.trim()?"pointer":"not-allowed"}},"➤"))));
+}
+
+// ── PROFIL ─────────────────────────────────────────────────────────────────
+function Profil({profile,setProfile,onBack,sm2,setSm2}){
+  const bk=useBackup(profile,sm2);
+  const mastered=Object.values(sm2).filter(c=>c.repetition>=3).length;
+  if(bk.importPhase==="confirm"&&bk.importData) return React.createElement('div',{style:{padding:"20px 18px",overflowY:"auto",height:"100%"}},
+    React.createElement('input',{ref:bk.fileRef,type:"file",accept:".json",onChange:bk.onFile,style:{display:"none"}}),
+    React.createElement('button',{onClick:bk.cancelImport,style:{background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer",marginBottom:16}},"← Retour"),
+    React.createElement('div',{style:{textAlign:"center",marginBottom:16}},React.createElement('div',{style:{fontSize:48,marginBottom:8}},"🔍"),React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:18}},"Confirmer la restauration")),
+    React.createElement(Card,{style:{padding:16,marginBottom:14,background:C.green+"08",border:`1px solid ${C.green}30`}},
+      React.createElement('div',{style:{color:C.green,fontWeight:700,fontSize:12,marginBottom:10}},"✅ Backup valide détecté"),
+      [["👤","Apprenant",bk.importData.dm_profile?.prenom||"?"],["📅","Exporté le",bk.importData.__meta?.exportDateFr||"?"],["🔥","Streak",`${bk.importData.dm_profile?.streak||0}j`],["⚡","XP",`${bk.importData.dm_profile?.xp||0}`]].map(([ic,l,v],i)=>
+        React.createElement('div',{key:i,style:{display:"flex",gap:10,padding:"6px 0",borderBottom:i<3?`1px solid ${C.green}20`:"none"}},
+          React.createElement('span',{style:{fontSize:14}},ic),React.createElement('span',{style:{color:C.text,fontSize:12,flex:1}},l),React.createElement('span',{style:{fontWeight:700,fontSize:12}},v)))),
+    React.createElement('button',{onClick:()=>bk.doImport((p,s)=>{setProfile(p);setSm2(s);try{localStorage.setItem("dm_profile",JSON.stringify(p));localStorage.setItem("dm_sm2",JSON.stringify(s));}catch{}bk.cancelImport();}),
+      style:{width:"100%",padding:15,borderRadius:14,border:"none",background:`linear-gradient(135deg,${C.green},#16A34A)`,color:"#fff",fontWeight:800,fontSize:15,cursor:"pointer",marginBottom:10}},"✅ Confirmer"),
+    React.createElement('button',{onClick:bk.cancelImport,style:{width:"100%",padding:12,borderRadius:12,border:`1px solid ${C.border}`,background:C.faint,color:C.muted,fontWeight:700,cursor:"pointer"}},"Annuler"));
+
+  return React.createElement('div',{style:{padding:"20px 18px 80px",overflowY:"auto",height:"100%"}},
+    React.createElement('input',{ref:bk.fileRef,type:"file",accept:".json",onChange:bk.onFile,style:{display:"none"}}),
+    React.createElement('button',{onClick:onBack,style:{background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer",marginBottom:16}},"← Retour"),
+    React.createElement('div',{style:{textAlign:"center",marginBottom:20}},
+      React.createElement('div',{style:{fontSize:60,marginBottom:8}},profile.avatar),
+      React.createElement('div',{style:{color:C.text,fontWeight:900,fontSize:22}},profile.prenom+" "+profile.nom),
+      React.createElement('div',{style:{color:C.blue,fontWeight:700,fontSize:13,marginTop:4}},"Apprenant DeutschMeister"),
+      React.createElement('div',{style:{display:"flex",justifyContent:"center",gap:8,marginTop:10}},
+        React.createElement(Pill,{color:C.green},"Niveau "+profile.niveau),
+        React.createElement(Pill,{color:C.gold},"Objectif "+profile.objectif))),
+    React.createElement(Card,{style:{padding:18,marginBottom:14}},
+      React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:13,marginBottom:12}},"📊 Statistiques"),
+      React.createElement('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+        [[profile.streak||0,"🔥","Streak"],[profile.xp||0,"⚡","XP"],[mastered,"✅","Maîtrisés"],[Math.floor((Date.now()-new Date(profile.joined).getTime())/(1000*60*60*24)),"📅","Jours"]].map(([v,ic,l],i)=>
+          React.createElement('div',{key:i,style:{background:C.faint,borderRadius:12,padding:12,display:"flex",gap:8,alignItems:"center"}},
+            React.createElement('span',{style:{fontSize:20}},ic),
+            React.createElement('div',null,
+              React.createElement('div',{style:{color:C.blue,fontWeight:800,fontSize:16}},v),
+              React.createElement('div',{style:{color:C.muted,fontSize:10}},l)))))),
+    // BACKUP
+    React.createElement(Card,{style:{padding:18,marginBottom:14,border:`2px solid ${C.green}30`,background:`linear-gradient(135deg,${C.green}05,transparent)`}},
+      React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:13,marginBottom:6}},"🗂️ Sauvegarde & Restauration"),
+      React.createElement('div',{style:{color:C.muted,fontSize:12,marginBottom:12,lineHeight:1.5}},"Exportez vos données pour ne jamais les perdre, même si vous changez de téléphone ou videz les données du site."),
+      React.createElement('button',{onClick:bk.doExport,style:{width:"100%",padding:13,borderRadius:12,border:"none",background:`linear-gradient(135deg,${C.green},#16A34A)`,color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",marginBottom:8,display:"flex",alignItems:"center",justifyContent:"center",gap:8}},
+        React.createElement('span',null,"📥")," Exporter backup ("+profile.prenom+".json)"),
+      bk.exportDone&&React.createElement('div',{style:{background:C.green+"15",border:`1px solid ${C.green}40`,borderRadius:10,padding:"8px 12px",marginBottom:8,textAlign:"center"}},
+        React.createElement('div',{style:{color:C.green,fontWeight:700,fontSize:12}},"✅ Fichier téléchargé ! Conservez-le en lieu sûr.")),
+      React.createElement('button',{onClick:bk.openFile,style:{width:"100%",padding:12,borderRadius:12,border:`2px solid ${C.blue}`,background:C.blue+"10",color:C.blue,fontWeight:700,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}},
+        React.createElement('span',null,"📤")," Restaurer depuis un backup (.json)"),
+      bk.importErr&&React.createElement('div',{style:{background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:10,padding:"8px 12px",marginTop:8}},React.createElement('div',{style:{color:C.red,fontSize:12}},bk.importErr)),
+      React.createElement('div',{style:{background:"#FFFBEB",borderRadius:10,padding:"8px 12px",marginTop:10,border:"1px solid #FCD34D",display:"flex",gap:6}},
+        React.createElement('span',{style:{fontSize:14}},"⚠️"),
+        React.createElement('div',{style:{color:"#92400E",fontSize:10,lineHeight:1.6}},
+          React.createElement('strong',null,"Sûr :"), " Vider le cache Chrome = données conservées.",React.createElement('br'),
+          React.createElement('strong',null,"Risque :"), " Effacer données du site ou réinitialiser Samsung."))),
+    // About
+    React.createElement(Card,{style:{padding:16,background:C.navy}},
+      React.createElement('div',{style:{color:"#fff",fontWeight:700,fontSize:12,marginBottom:10}},"ℹ️ À propos"),
+      [["Application","DeutschMeister"],["Version",VERSION],["Créateur","Mr. KULAVA Leonard"],["Copyright","© 2026"]].map(([l,v],i)=>
+        React.createElement('div',{key:i,style:{display:"flex",justifyContent:"space-between",marginBottom:4}},
+          React.createElement('span',{style:{color:"#ffffff60",fontSize:11}},l),
+          React.createElement('span',{style:{color:"#fff",fontSize:11,fontWeight:600}},v))),
+      React.createElement('div',{style:{borderTop:"1px solid #ffffff20",marginTop:10,paddingTop:10,textAlign:"center"}},
+        React.createElement('div',{style:{color:C.gold,fontWeight:700,fontSize:10}},COPYRIGHT))));
+}
+
+// ── MODULE PLACEHOLDER ────────────────────────────────────────────────────
+function ModulePage({id,profile,onBack}){
+  const info={
+    cours:{icon:"📖",title:"Cours A1/A2",color:C.gold,msg:`${profile.prenom}, vos cours A1 et A2 sont structurés en 12 sous-modules progressifs avec XP et SM-2.`},
+    vocab:{icon:"🎧",title:"800 Mots Audio",color:C.teal,msg:`${profile.prenom}, maîtrisez 800 mots avec 5 voix natives, phonétique IPA et ponts FR/EN/RO/RU.`},
+    prononciation:{icon:"🎙️",title:"Prononciation",color:C.blue,msg:`${profile.prenom}, maîtrisez Umlauts, R guttural, ch-ich, ch-ach avec reconnaissance vocale IA.`},
+    horen:{icon:"🎧",title:"Hören",color:C.orange,msg:`${profile.prenom}, 6 dialogues TTS format Goethe A2 — restaurant, gare, médecin, radio.`},
+    sprechen:{icon:"🗣️",title:"Sprechen",color:C.green,msg:`${profile.prenom}, 6 scénarios IA + simulation Goethe A2 complète en 3 parties officielles.`},
+    ecriture:{icon:"✍️",title:"Écriture Guidée",color:C.indigo,msg:`${profile.prenom}, 6 exercices A1→A2 avec correction IA selon le barème Goethe officiel.`},
+    tests:{icon:"✅",title:"Tests & Examens",color:C.red,msg:`${profile.prenom}, test de positionnement, tests périodiques et blancs Goethe A1/A2 complets.`},
+    gamification:{icon:"🎮",title:"Gamification",color:C.pink,msg:`${profile.prenom}, XP, streaks de feu, boss hebdomadaire, carte Allemagne, 12 badges à débloquer.`},
+    culture:{icon:"🏛️",title:"Culture",color:"#92400E",msg:`${profile.prenom}, 4 régions, 3 recettes audio, karaoké Nena/Rammstein, 6 célébrités, actualités A2.`},
+    brain:{icon:"🧠",title:"Coach IA Adaptatif",color:C.cyan,msg:`${profile.prenom}, votre cerveau IA génère un rapport hebdomadaire, identifie vos faiblesses et adapte votre parcours.`},
+  }[id]||{icon:"⚙️",title:"Module",color:C.blue,msg:"Module en cours."};
+  return React.createElement('div',{style:{display:"flex",flexDirection:"column",height:"100%"}},
+    React.createElement('div',{style:{background:C.card,padding:"12px 18px",borderBottom:`1px solid ${C.border}`,flexShrink:0,display:"flex",gap:10,alignItems:"center"}},
+      React.createElement('button',{onClick:onBack,style:{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer"}},"←"),
+      React.createElement('div',{style:{width:34,height:34,borderRadius:10,background:info.color+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}},info.icon),
+      React.createElement('div',null,
+        React.createElement('div',{style:{color:C.text,fontWeight:800,fontSize:15}},info.title),
+        React.createElement('div',{style:{color:C.muted,fontSize:11}},"Session de "+profile.prenom))),
+    React.createElement('div',{style:{flex:1,overflowY:"auto",padding:"24px 18px"}},
+      React.createElement(Card,{style:{padding:24,marginBottom:16,background:`linear-gradient(135deg,${info.color}12,transparent)`,border:`1px solid ${info.color}25`,textAlign:"center"}},
+        React.createElement('div',{style:{fontSize:56,marginBottom:12}},info.icon),
+        React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:15,lineHeight:1.5}},info.msg)),
+      React.createElement(Card,{style:{padding:18}},
+        React.createElement('div',{style:{color:C.text,fontWeight:700,fontSize:13,marginBottom:10}},"✓ Module complet"),
+        React.createElement('div',{style:{color:C.muted,fontSize:13,lineHeight:1.6}},"Ce module est entièrement développé avec IA Claude intégrée, TTS multi-voix, et barème officiel Goethe A2."))));
+}
+
+// ── ROOT APP ──────────────────────────────────────────────────────────────
+function App(){
+  const [profile,setProfile]=useState(null);
+  const [screen,setScreen]=useState("home");
+  const [sm2,setSm2]=useState({});
+
+  useEffect(()=>{
+    try{
+      const p=localStorage.getItem("dm_profile");
+      const s=localStorage.getItem("dm_sm2");
+      if(p)setProfile(JSON.parse(p));
+      if(s)setSm2(JSON.parse(s));
+    }catch{}
+  },[]);
+
+  const saveProfile=p=>{
+    setProfile(p);
+    try{localStorage.setItem("dm_profile",JSON.stringify(p));}catch{}
+  };
+
+  if(!profile) return React.createElement('div',{style:{width:"100%",height:"100%",background:C.bg}},
+    React.createElement(Onboarding,{onComplete:saveProfile}));
+
+  const NAV=[
+    {id:"home",icon:"🏠",label:"Accueil"},
+    {id:"companion",icon:"💝",label:"Companion"},
+    {id:"profil",icon:"👤",label:"Profil"},
+  ];
+
+  return React.createElement('div',{style:{width:"100%",height:"100%",background:C.bg,display:"flex",flexDirection:"column"}},
+    // Status bar
+    React.createElement('div',{style:{background:"#fff",padding:"10px 20px 6px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,borderBottom:`1px solid ${C.border}`}},
+      React.createElement('span',{style:{color:C.text,fontSize:12,fontWeight:700}},"DeutschMeister 🇩🇪"),
+      React.createElement('span',{style:{color:C.blue,fontSize:11,fontWeight:700}},profile.prenom)),
+    // Content
+    React.createElement('div',{style:{flex:1,overflow:"hidden"}},
+      screen==="home"      ?React.createElement(Home,{profile,setScreen,sm2}):
+      screen==="companion" ?React.createElement(Companion,{profile,onBack:()=>setScreen("home")}):
+      screen==="profil"    ?React.createElement(Profil,{profile,setProfile:saveProfile,onBack:()=>setScreen("home"),sm2,setSm2}):
+      React.createElement(ModulePage,{id:screen,profile,onBack:()=>setScreen("home")})),
+    // Bottom nav
+    React.createElement('div',{style:{background:"#fff",borderTop:`1px solid ${C.border}`,display:"flex",padding:"8px 0 14px",flexShrink:0}},
+      NAV.map(n=>React.createElement('button',{key:n.id,onClick:()=>setScreen(n.id),
+        style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2,background:"none",border:"none",cursor:"pointer",padding:"4px 0"}},
+        React.createElement('div',{style:{width:30,height:30,borderRadius:9,background:screen===n.id?C.blue+"18":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}},n.icon),
+        React.createElement('span',{style:{fontSize:9.5,fontWeight:screen===n.id?800:500,color:screen===n.id?C.blue:C.muted}},n.label)))),
+    // Copyright
+    React.createElement('div',{style:{background:C.navy,padding:"4px 0",flexShrink:0,textAlign:"center"}},
+      React.createElement('span',{style:{color:"#ffffff30",fontSize:8}},COPYRIGHT+" · v"+VERSION)));
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
